@@ -1,0 +1,14 @@
+{
+    "python.formatting.provider": "black",
+    "python.sortImports.path": "isort",
+    "python.sortImports.args": [
+        "--profile",
+        "black",
+    ],
+    "python.analysis.extraPaths": [
+        "./__pypackages__/3.10/lib",
+    ],
+    "files.exclude": {
+        "__pypackages__": true,
+    },
+}
