@@ -1,15 +1,12 @@
-from graia.ariadne.entry import Ariadne, Friend, MessageChain, config
+import json
+
+from graia.ariadne.entry import Ariadne, Friend, config
+from graia.ariadne.event.message import FriendMessage
+
+app = Ariadne(config(**json.load(open(".secret.json"))))
 
 
-app = Ariadne(
-    config(
-        verify_key="ServiceVerifyKey",
-        account=123456789,
-    )
-)
-
-
-@app.broadcast.receiver("FriendMessage")
+@app.broadcast.receiver(FriendMessage)
 async def friend_message_listener(app: Ariadne, friend: Friend):
     await app.send_message(friend, "Hello, World!")
 
