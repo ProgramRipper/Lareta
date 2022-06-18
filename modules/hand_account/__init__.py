@@ -1,8 +1,10 @@
 from time import time_ns
 from typing import TYPE_CHECKING, TypedDict
 
+from graia.amnesia.message import MessageChain
 from graia.ariadne.app import Ariadne
 from graia.ariadne.event.message import FriendMessage, GroupMessage
+from graia.ariadne.message.element import ForwardNode
 from graia.ariadne.message.parser.twilight import (
     PRESERVE,
     ArgResult,
@@ -65,6 +67,34 @@ class Record(SQLModel, table=True):
     timestamp: int = Field(default_factory=time_ns)
     owner: int
     message_chain: bytes
+
+
+class Recording(TypedDict):
+    title: str
+    owner: int
+    message_chain: list[ForwardNode]
+
+
+recording: dict[int, Recording] = {}
+
+
+@channel.use(ListenerSchema([FriendMessage, GroupMessage]))
+async def recorder(
+    message_chain: MessageChain,
+    sender: Friend | Member,
+):
+    if record := recording.get(sender.id):
+        record["message_chain"].append(
+            ForwardNode(
+                sender,
+                datetime.now(),
+                message_chain,
+                cast(
+                    str,
+                    getattr(sender, "nickname", None) or getattr(sender, "name", None),
+                ),
+            )
+        )
 
 
 @channel.use(

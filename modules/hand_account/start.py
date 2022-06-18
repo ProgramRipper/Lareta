@@ -15,12 +15,10 @@ from graia.ariadne.message.parser.twilight import (
     RegexResult,
     Twilight,
 )
+from graia.ariadne.model.relationship import Friend, Member
 from graia.saya import Saya
 from graia.saya.builtins.broadcast.schema import ListenerSchema
 from graia.saya.channel import Channel
-from loguru import logger
-from sqlalchemy.engine import result
-from sqlalchemy.engine.result import ScalarResult
 from sqlmodel import select
 
 if TYPE_CHECKING:
@@ -51,7 +49,7 @@ __doc__ = Twilight(
         inline_dispatchers=[
             Twilight(
                 FullMatch(f"{prefix} start").space(PRESERVE),
-                "t" @ ParamMatch(True),
+                "title" @ ParamMatch(True),
                 "help" @ ArgumentMatch("--help", "-h", action="store_true"),
             )
         ],
@@ -60,31 +58,24 @@ __doc__ = Twilight(
 async def start(
     app: Ariadne,
     message: FriendMessage | GroupMessage,
-    message_chain: MessageChain,
-    t: RegexResult,
+    sender: Friend | Member,
+    title: RegexResult,
     help: ArgResult,
 ):
-    from . import Record
+    from . import recording, Recording
 
     if help.result:
         await app.send_message(message, cast(str, __doc__))
         return
-    if t.matched:
-        title = str(t.result)
-    else:
-        title = datetime.now().strftime("%Y-%m-%d_%H:%M:%S")
-    await app.send_message(message, f"Start recording {title}")
-
-    async with Session() as session:
-        record = Record(
-            title=title,
-            owner=message.sender.id,
-            message_chain=pickle.dumps(message_chain),
-        )
-        session.add(record)
-        await session.commit()
-    async with Session() as session:
-        result = (
-            await session.exec(select(Record).where(Record.title == title))
-        ).one_or_none()
-        await app.send_message(message, pickle.loads(result.message_chain))
+    if sender.id in recording:
+        await app.send_message(message, "你已经在被记录中了")
+        return
+    record = Recording(
+        title=str(title.result)
+        if title.matched
+        else datetime.now().strftime("%Y-%m-%d_%H:%M:%S"),
+        owner=sender.id,
+        message_chain=[],
+    )
+    recording[sender.id] = record
+    await app.send_message(message, f"Start recording {record['title']}")
