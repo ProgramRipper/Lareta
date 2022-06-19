@@ -1,10 +1,13 @@
+import pickle
+from collections import defaultdict
+from datetime import datetime
 from time import time_ns
-from typing import TYPE_CHECKING, TypedDict
+from typing import TYPE_CHECKING, TypedDict, cast
 
-from graia.amnesia.message import MessageChain
+from graia.ariadne.message.chain import MessageChain
 from graia.ariadne.app import Ariadne
 from graia.ariadne.event.message import FriendMessage, GroupMessage
-from graia.ariadne.message.element import ForwardNode
+from graia.ariadne.message.element import Forward, ForwardNode
 from graia.ariadne.message.parser.twilight import (
     PRESERVE,
     ArgResult,
@@ -14,6 +17,7 @@ from graia.ariadne.message.parser.twilight import (
     RegexMatch,
     RegexResult,
     Twilight,
+    UnionMatch,
 )
 from graia.ariadne.model.relationship import Friend, Member
 from graia.broadcast.exceptions import PropagationCancelled
@@ -22,8 +26,15 @@ from graia.saya.builtins.broadcast.schema import ListenerSchema
 from sqlmodel import Field, SQLModel
 from typing_extensions import NotRequired
 
+from sqlmodel.sql.expression import select
+
+select
 if TYPE_CHECKING:
+    from sqlalchemy.orm.session import sessionmaker
+    from sqlmodel.ext.asyncio.session import AsyncSession
+
     from ...main import ConfigType
+
 
 saya = Saya.current()
 channel = Channel.current()
@@ -31,6 +42,9 @@ channel = Channel.current()
 channel.name(__name__.split(".")[-1])
 channel.author("ProgramRipper")
 
+Session: "sessionmaker[AsyncSession]" = saya.access(  # type: ignore
+    "sqlalchemy.orm.session.sessionmaker"
+)
 config: "ConfigType" = saya.access("__main__.config")
 sudoer = config["sudoer"]
 
@@ -60,6 +74,8 @@ __doc__ = Twilight(
 )
 channel.description(__doc__)
 
+helps: dict[str, str] = {}
+
 
 class Record(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
@@ -78,7 +94,10 @@ class Recording(TypedDict):
 recording: dict[int, Recording] = {}
 
 
-@channel.use(ListenerSchema([FriendMessage, GroupMessage]))
+# root
+
+
+@channel.use(ListenerSchema([FriendMessage, GroupMessage], priority=28))
 async def recorder(
     message_chain: MessageChain,
     sender: Friend | Member,
@@ -103,7 +122,7 @@ async def recorder(
         inline_dispatchers=[
             Twilight(FullMatch(prefix).space(PRESERVE), RegexMatch(".*", True))
         ],
-        priority=0,
+        priority=12,
     )
 )
 async def permission(
@@ -124,26 +143,163 @@ async def permission(
                 "help" @ ArgumentMatch("--help", "-h", action="store_true"),
             )
         ],
-        priority=32,
+        priority=20,
     )
 )
 async def help(
     app: Ariadne,
     message: FriendMessage | GroupMessage,
     cmd: RegexResult,
-    help: ArgResult,
 ):
     description = channel.meta["description"]
-    if not cmd.matched or str(cmd.result) == "help" or help.result:
+    if not cmd.matched or (command := str(cmd.result)) == "help":
         await app.send_message(message, description)
+    elif help := helps.get(command):
+        await app.send_message(message, help)
     else:
         await app.send_message(
             message, f"Unknown command: {str(cmd.result)}\n{description}"
         )
+    raise PropagationCancelled
 
 
-from .clear import *
-from .list import *
-from .show import *
-from .start import *
-from .stop import *
+# start
+
+
+helps["start"] = Twilight(
+    FullMatch(f"{prefix} start").space(PRESERVE),
+    "title" @ ParamMatch().help("标题"),
+    ArgumentMatch("--help", "-h", action="store_true"),
+).get_help(
+    f"{prefix} start {{title}}",
+    "魔女手账",
+    f"{channel.meta['name']}@{channel.meta['author'][0]}",
+)
+
+
+@channel.use(
+    ListenerSchema(
+        [FriendMessage, GroupMessage],
+        inline_dispatchers=[
+            Twilight(
+                FullMatch(f"{prefix} start").space(PRESERVE),
+                "title" @ ParamMatch(True),
+            )
+        ],
+    )
+)
+async def start(
+    app: Ariadne,
+    message: FriendMessage | GroupMessage,
+    sender: Friend | Member,
+    title: RegexResult,
+):
+    if sender.id in recording:
+        await app.send_message(message, "你已经在被记录中了")
+        return
+    record = Recording(
+        title=str(title.result)
+        if title.matched
+        else datetime.now().strftime("%Y-%m-%d_%H:%M:%S"),
+        owner=sender.id,
+        message_chain=[],
+    )
+    recording[sender.id] = record
+    await app.send_message(message, f"Start recording {record['title']}")
+
+
+# stop
+
+
+helps["stop"] = Twilight(
+    FullMatch(f"{prefix} stop").space(PRESERVE),
+    ArgumentMatch("--help", "-h", action="store_true"),
+).get_help(
+    f"{prefix} stop",
+    "魔女手账",
+    f"{channel.meta['name']}@{channel.meta['author'][0]}",
+)
+
+
+@channel.use(
+    ListenerSchema(
+        [FriendMessage, GroupMessage],
+        inline_dispatchers=[
+            Twilight(
+                FullMatch(f"{prefix} stop").space(PRESERVE),
+                "help" @ ArgumentMatch("--help", "-h", action="store_true"),
+            )
+        ],
+    )
+)
+async def stop(
+    app: Ariadne,
+    message: FriendMessage | GroupMessage,
+    sender: Friend | Member,
+    help: ArgResult,
+):
+    if help.result:
+        await app.send_message(message, cast(str, __doc__))
+        return
+    if not (record := recording.get(sender.id)):
+        await app.send_message(message, "你没有在被记录中")
+        return
+    del recording[sender.id]
+
+    title = record["title"]
+    owner = record["owner"]
+    message_chain = MessageChain([Forward(record["message_chain"])])
+
+    async with Session() as session:
+        record = Record(
+            title=title,
+            owner=owner,
+            message_chain=pickle.dumps(message_chain),
+        )
+        session.add(record)
+        await session.commit()
+
+    await app.send_message(message, f"Stop recording {title}")
+
+
+# show
+
+__doc__ = Twilight(
+    FullMatch(f"{prefix} show").space(PRESERVE),
+    "title" @ ParamMatch().help("标题"),
+    ArgumentMatch("--help", "-h", action="store_true"),
+).get_help(
+    f"{prefix} show {{title}}",
+    "魔女手账",
+    f"{channel.meta['name']}@{channel.meta['author'][0]}",
+)
+
+
+@channel.use(
+    ListenerSchema(
+        [FriendMessage, GroupMessage],
+        inline_dispatchers=[
+            Twilight(
+                FullMatch(f"{prefix} show").space(PRESERVE),
+                "title" @ ParamMatch(),
+            )
+        ],
+    )
+)
+async def show(
+    app: Ariadne,
+    message: FriendMessage | GroupMessage,
+    title: RegexResult,
+):
+    from . import Record
+
+    if help.result or not title.matched:
+        await app.send_message(message, cast(str, __doc__))
+        return
+
+    async with Session() as session:
+        record = (
+            await session.exec(select(Record).where(Record.title == str(title.result)))
+        ).first()
+        message_chain = pickle.loads(record.message_chain)
+    await app.send_message(message, message_chain)

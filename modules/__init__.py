@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio.engine import create_async_engine
 from sqlalchemy.orm.session import sessionmaker
 from sqlmodel import SQLModel
 from sqlmodel.ext.asyncio.session import AsyncSession
+from graia.broadcast.exceptions import PropagationCancelled
 
 if TYPE_CHECKING:
     from ..main import ConfigType
@@ -69,3 +70,4 @@ async def module_event_listener(
 )
 async def ping(app: Ariadne, message: FriendMessage | GroupMessage):
     await app.send_message(message, "pong!")
+    raise PropagationCancelled
