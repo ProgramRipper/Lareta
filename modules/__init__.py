@@ -4,6 +4,7 @@ from graia.ariadne.app import Ariadne
 from graia.ariadne.event.lifecycle import ApplicationLaunched
 from graia.ariadne.event.message import FriendMessage, GroupMessage
 from graia.ariadne.message.parser.twilight import FullMatch, Twilight
+from graia.broadcast.exceptions import PropagationCancelled
 from graia.saya import Saya
 from graia.saya.builtins.broadcast.schema import ListenerSchema
 from graia.saya.channel import Channel, ChannelMeta
@@ -17,7 +18,6 @@ from sqlalchemy.ext.asyncio.engine import create_async_engine
 from sqlalchemy.orm.session import sessionmaker
 from sqlmodel import SQLModel
 from sqlmodel.ext.asyncio.session import AsyncSession
-from graia.broadcast.exceptions import PropagationCancelled
 
 if TYPE_CHECKING:
     from ..main import ConfigType
@@ -59,7 +59,6 @@ async def module_event_listener(
         f" {'installed' if isinstance(event, SayaModuleInstalled) else 'uninstalled'}"
     )
     logger.success(announcement)
-    await app.send_friend_message(config["sudoer"], announcement)
 
 
 @channel.use(

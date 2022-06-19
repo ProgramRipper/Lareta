@@ -1,13 +1,14 @@
+import asyncio
 import pickle
-from collections import defaultdict
+import re
 from datetime import datetime
 from time import time_ns
 from typing import TYPE_CHECKING, TypedDict, cast
 
-from graia.ariadne.message.chain import MessageChain
 from graia.ariadne.app import Ariadne
 from graia.ariadne.event.message import FriendMessage, GroupMessage
-from graia.ariadne.message.element import Forward, ForwardNode
+from graia.ariadne.message.chain import MessageChain
+from graia.ariadne.message.element import Forward, ForwardNode, MultimediaElement
 from graia.ariadne.message.parser.twilight import (
     PRESERVE,
     ArgResult,
@@ -17,22 +18,18 @@ from graia.ariadne.message.parser.twilight import (
     RegexMatch,
     RegexResult,
     Twilight,
-    UnionMatch,
 )
 from graia.ariadne.model.relationship import Friend, Member
 from graia.broadcast.exceptions import PropagationCancelled
 from graia.saya import Channel, Saya
 from graia.saya.builtins.broadcast.schema import ListenerSchema
-from sqlmodel import Field, SQLModel
+from sqlalchemy.exc import NoResultFound
+from sqlalchemy.orm.session import sessionmaker
+from sqlmodel import Field, SQLModel, select
+from sqlmodel.ext.asyncio.session import AsyncSession
 from typing_extensions import NotRequired
 
-from sqlmodel.sql.expression import select
-
-select
 if TYPE_CHECKING:
-    from sqlalchemy.orm.session import sessionmaker
-    from sqlmodel.ext.asyncio.session import AsyncSession
-
     from ...main import ConfigType
 
 
@@ -42,6 +39,7 @@ channel = Channel.current()
 channel.name(__name__.split(".")[-1])
 channel.author("ProgramRipper")
 
+_background_task: set[asyncio.Task] = saya.access("__main__._background_task")
 Session: "sessionmaker[AsyncSession]" = saya.access(  # type: ignore
     "sqlalchemy.orm.session.sessionmaker"
 )
@@ -74,63 +72,118 @@ __doc__ = Twilight(
 )
 channel.description(__doc__)
 
-helps: dict[str, str] = {}
+helps: dict[str, str] = {
+    "start": Twilight(
+        FullMatch(f"{prefix} start").space(PRESERVE),
+        "title" @ ParamMatch().help("标题"),
+        ArgumentMatch("--help", "-h", action="store_true"),
+    ).get_help(
+        f"{prefix} start {{title}}",
+        "魔女手账",
+        f"{channel.meta['name']}@{channel.meta['author'][0]}",
+    ),
+    "stop": Twilight(
+        FullMatch(f"{prefix} stop").space(PRESERVE),
+        ArgumentMatch("--help", "-h", action="store_true"),
+    ).get_help(
+        f"{prefix} stop",
+        "魔女手账",
+        f"{channel.meta['name']}@{channel.meta['author'][0]}",
+    ),
+    "show": Twilight(
+        FullMatch(f"{prefix} show").space(PRESERVE),
+        "title" @ ParamMatch().help("标题"),
+        ArgumentMatch("--help", "-h", action="store_true"),
+    ).get_help(
+        f"{prefix} show {{title}}",
+        "魔女手账",
+        f"{channel.meta['name']}@{channel.meta['author'][0]}",
+    ),
+}
 
 
-class Record(SQLModel, table=True):
-    id: int | None = Field(default=None, primary_key=True)
-    title: str
-    timestamp: int = Field(default_factory=time_ns)
-    owner: int
-    message_chain: bytes
-
-
-class Recording(TypedDict):
+class Recording(SQLModel):
     title: str
     owner: int
     message_chain: list[ForwardNode]
 
 
-recording: dict[int, Recording] = {}
+class Record(Recording, table=True):
+    id: int | None = Field(default=None, primary_key=True)
+    timestamp: int = Field(default_factory=time_ns)
+    message_chain: bytes
 
 
-# root
+recordings: dict[int, tuple[asyncio.Task, Recording]] = {}
 
 
-@channel.use(ListenerSchema([FriendMessage, GroupMessage], priority=28))
-async def recorder(
+async def callback(
+    app: Ariadne,
+    message: FriendMessage | GroupMessage,
+    sender: Friend | Member,
+    recording: Recording,
+):
+    await asyncio.sleep(5)
+    await app.send_message(
+        message, f"WARN: Timeout, auto stop recording {recording.title}"
+    )
+    _background_task.add(asyncio.create_task(stop(app, message, sender)))
+
+
+@channel.use(ListenerSchema([FriendMessage, GroupMessage], priority=32))
+async def record(
+    app: Ariadne,
+    message: FriendMessage | GroupMessage,
     message_chain: MessageChain,
     sender: Friend | Member,
 ):
-    if record := recording.get(sender.id):
-        record["message_chain"].append(
-            ForwardNode(
-                sender,
-                datetime.now(),
-                message_chain,
-                cast(
-                    str,
-                    getattr(sender, "nickname", None) or getattr(sender, "name", None),
-                ),
-            )
+    if not (recording := recordings.get(sender.id)):
+        return
+
+    time = datetime.now()
+
+    cb, recording = recording
+    cb.cancel()
+
+    if len(recording.message_chain) >= 1:
+        title = recording.title
+        result = re.search(r"\((\d*?)\)$", title)
+        new_title = (
+            f"{title[:result.start()]}({int(result[1])+1})" if result else f"{title}(1)"
         )
 
+        await app.send_message(
+            message,
+            f"WARN: Max message length reached, auto stop recording {title} and start new recording {new_title}",
+        )
 
-@channel.use(
-    ListenerSchema(
-        [FriendMessage, GroupMessage],
-        inline_dispatchers=[
-            Twilight(FullMatch(prefix).space(PRESERVE), RegexMatch(".*", True))
-        ],
-        priority=12,
+        await stop(app, message, sender)
+        await start(app, message, sender, new_title)
+
+        cb, recording = recordings[sender.id]
+        cb.cancel()
+
+    for element in message_chain:
+        if isinstance(element, MultimediaElement):
+            await element.get_bytes()
+
+    recording.message_chain.append(
+        ForwardNode(
+            sender,
+            time,
+            message_chain,
+            cast(
+                str,
+                getattr(sender, "nickname", None) or getattr(sender, "name", None),
+            ),
+        )
     )
-)
-async def permission(
-    app: Ariadne, message: FriendMessage | GroupMessage, sender: Friend | Member
-):
-    if sender.id not in whitelist:
-        await app.send_message(message, "Permisson denied")
-        raise PropagationCancelled
+
+    cb = asyncio.create_task(callback(app, message, sender, recording))
+    _background_task.add(cb)
+    cb.add_done_callback(_background_task.discard)
+
+    recordings[sender.id] = (cb, recording)
 
 
 @channel.use(
@@ -140,166 +193,115 @@ async def permission(
             Twilight(
                 FullMatch(prefix).space(PRESERVE),
                 "cmd" @ ParamMatch(True),
+                "title" @ ParamMatch(True),
                 "help" @ ArgumentMatch("--help", "-h", action="store_true"),
+                RegexMatch(".*"),
             )
         ],
-        priority=20,
     )
 )
-async def help(
+async def main(
     app: Ariadne,
     message: FriendMessage | GroupMessage,
+    sender: Friend | Member,
     cmd: RegexResult,
+    title: RegexResult,
+    help: ArgResult,
 ):
-    description = channel.meta["description"]
-    if not cmd.matched or (command := str(cmd.result)) == "help":
-        await app.send_message(message, description)
-    elif help := helps.get(command):
-        await app.send_message(message, help)
-    else:
-        await app.send_message(
-            message, f"Unknown command: {str(cmd.result)}\n{description}"
-        )
+    help = cast(ArgResult[bool], help)  # TODO: support TypeVar in Twilight
+
+    if sender.id not in whitelist:
+        await app.send_message(message, "FATAL: Permission denied")
+        raise PropagationCancelled
+
+    command = str(cmd.result) if cmd.matched else "help"
+
+    if help.result and command in helps:
+        await app.send_message(message, helps[command])
+        raise PropagationCancelled
+
+    match command:
+        case "start":
+            await start(
+                app, message, sender, str(title.result) if title.matched else None
+            )
+        case "stop":
+            await stop(app, message, sender)
+        case "show":
+            await show(app, message, str(title.result) if title.matched else None)
+        case "help":
+            await app.send_message(message, cast(str, __doc__))
+        case unknown_command:
+            await app.send_message(
+                message, f"Unknown command: {unknown_command}\n{__doc__}"
+            )
+
     raise PropagationCancelled
 
 
-# start
-
-
-helps["start"] = Twilight(
-    FullMatch(f"{prefix} start").space(PRESERVE),
-    "title" @ ParamMatch().help("标题"),
-    ArgumentMatch("--help", "-h", action="store_true"),
-).get_help(
-    f"{prefix} start {{title}}",
-    "魔女手账",
-    f"{channel.meta['name']}@{channel.meta['author'][0]}",
-)
-
-
-@channel.use(
-    ListenerSchema(
-        [FriendMessage, GroupMessage],
-        inline_dispatchers=[
-            Twilight(
-                FullMatch(f"{prefix} start").space(PRESERVE),
-                "title" @ ParamMatch(True),
-            )
-        ],
-    )
-)
 async def start(
     app: Ariadne,
     message: FriendMessage | GroupMessage,
     sender: Friend | Member,
-    title: RegexResult,
+    title: str | None = None,
 ):
-    if sender.id in recording:
-        await app.send_message(message, "你已经在被记录中了")
+    if sender.id in recordings:
+        await app.send_message(message, "ERROR: You are already being recorded")
         return
-    record = Recording(
-        title=str(title.result)
-        if title.matched
-        else datetime.now().strftime("%Y-%m-%d_%H:%M:%S"),
+
+    recording = Recording(
+        title=title or datetime.now().strftime("%Y-%m-%d_%H:%M:%S"),
         owner=sender.id,
         message_chain=[],
     )
-    recording[sender.id] = record
-    await app.send_message(message, f"Start recording {record['title']}")
+
+    cb = asyncio.create_task(callback(app, message, sender, recording))
+    _background_task.add(cb)
+    cb.add_done_callback(_background_task.discard)
+
+    recordings[sender.id] = (cb, recording)
+    await app.send_message(message, f"INFO: Start recording {recording.title}")
 
 
-# stop
-
-
-helps["stop"] = Twilight(
-    FullMatch(f"{prefix} stop").space(PRESERVE),
-    ArgumentMatch("--help", "-h", action="store_true"),
-).get_help(
-    f"{prefix} stop",
-    "魔女手账",
-    f"{channel.meta['name']}@{channel.meta['author'][0]}",
-)
-
-
-@channel.use(
-    ListenerSchema(
-        [FriendMessage, GroupMessage],
-        inline_dispatchers=[
-            Twilight(
-                FullMatch(f"{prefix} stop").space(PRESERVE),
-                "help" @ ArgumentMatch("--help", "-h", action="store_true"),
-            )
-        ],
-    )
-)
 async def stop(
-    app: Ariadne,
-    message: FriendMessage | GroupMessage,
-    sender: Friend | Member,
-    help: ArgResult,
+    app: Ariadne, message: FriendMessage | GroupMessage, sender: Friend | Member
 ):
-    if help.result:
-        await app.send_message(message, cast(str, __doc__))
-        return
-    if not (record := recording.get(sender.id)):
-        await app.send_message(message, "你没有在被记录中")
-        return
-    del recording[sender.id]
+    if not (recording := recordings.get(sender.id)):
+        return await app.send_message(message, "ERROR: You are not being recorded")
 
-    title = record["title"]
-    owner = record["owner"]
-    message_chain = MessageChain([Forward(record["message_chain"])])
+    del recordings[sender.id]
+    cb, recording = recording
+    cb.cancel()
+
+    message_chain = MessageChain([Forward(recording.message_chain)])
 
     async with Session() as session:
         record = Record(
-            title=title,
-            owner=owner,
+            title=recording.title,
+            owner=recording.owner,
             message_chain=pickle.dumps(message_chain),
         )
         session.add(record)
         await session.commit()
 
-    await app.send_message(message, f"Stop recording {title}")
+    await app.send_message(message, f"INFO: Stop recording {recording.title}")
 
 
-# show
-
-__doc__ = Twilight(
-    FullMatch(f"{prefix} show").space(PRESERVE),
-    "title" @ ParamMatch().help("标题"),
-    ArgumentMatch("--help", "-h", action="store_true"),
-).get_help(
-    f"{prefix} show {{title}}",
-    "魔女手账",
-    f"{channel.meta['name']}@{channel.meta['author'][0]}",
-)
-
-
-@channel.use(
-    ListenerSchema(
-        [FriendMessage, GroupMessage],
-        inline_dispatchers=[
-            Twilight(
-                FullMatch(f"{prefix} show").space(PRESERVE),
-                "title" @ ParamMatch(),
-            )
-        ],
-    )
-)
 async def show(
-    app: Ariadne,
-    message: FriendMessage | GroupMessage,
-    title: RegexResult,
+    app: Ariadne, message: FriendMessage | GroupMessage, title: str | None = None
 ):
-    from . import Record
+    if title is None:
+        return await app.send_message(message, helps["show"])
 
-    if help.result or not title.matched:
-        await app.send_message(message, cast(str, __doc__))
-        return
+    try:
+        async with Session() as session:
+            record = (
+                await session.exec(
+                    select(Record).where(Record.title == title)  # type: ignore # I don't know why...
+                )
+            ).one()  # type: Record
+            message_chain = pickle.loads(record.message_chain)
+    except NoResultFound:
+        message_chain = f"ERROR: No matching record found for {title}"
 
-    async with Session() as session:
-        record = (
-            await session.exec(select(Record).where(Record.title == str(title.result)))
-        ).first()
-        message_chain = pickle.loads(record.message_chain)
     await app.send_message(message, message_chain)
