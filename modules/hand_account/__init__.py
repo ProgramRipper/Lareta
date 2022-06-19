@@ -123,7 +123,7 @@ async def callback(
     sender: Friend | Member,
     recording: Recording,
 ):
-    await asyncio.sleep(5)
+    await asyncio.sleep(5 * 60)
     await app.send_message(
         message, f"WARN: Timeout, auto stop recording {recording.title}"
     )
@@ -145,7 +145,7 @@ async def record(
     cb, recording = recording
     cb.cancel()
 
-    if len(recording.message_chain) >= 1:
+    if len(recording.message_chain) >= 100:
         title = recording.title
         result = re.search(r"\((\d*?)\)$", title)
         new_title = (
@@ -248,6 +248,16 @@ async def start(
     if sender.id in recordings:
         await app.send_message(message, "ERROR: You are already being recorded")
         return
+    from sqlmodel import func
+
+    async with Session() as session:
+        if (
+            await session.exec(
+                select(func.count(Record.id)).where(Record.title == title)  # type: ignore
+            )
+        ).one():
+            await app.send_message(message, f"ERROR: Record {title} already exists")
+            return
 
     recording = Recording(
         title=title or datetime.now().strftime("%Y-%m-%d_%H:%M:%S"),
