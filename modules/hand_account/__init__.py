@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, TypedDict, cast
 
 from graia.ariadne.app import Ariadne
 from graia.ariadne.event.message import FriendMessage, GroupMessage
-from graia.ariadne.message.chain import MessageChain
+from graia.ariadne.message.chain import MessageChain, MessageContainer
 from graia.ariadne.message.element import At, Forward, ForwardNode, MultimediaElement
 from graia.ariadne.message.parser.twilight import (
     PRESERVE,
@@ -23,7 +23,6 @@ from graia.ariadne.model.relationship import Friend, Member
 from graia.broadcast.exceptions import PropagationCancelled
 from graia.saya import Channel, Saya
 from graia.saya.builtins.broadcast.schema import ListenerSchema
-from loguru import logger
 from sqlalchemy.exc import NoResultFound
 from sqlalchemy.orm.session import sessionmaker
 from sqlmodel import Field, SQLModel, func, select
@@ -31,8 +30,9 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from typing_extensions import NotRequired
 
 if TYPE_CHECKING:
-    from ...main import ConfigType
+    from collections.abc import Iterable
 
+    from ...main import ConfigType
 
 saya = Saya.current()
 channel = Channel.current()
@@ -119,15 +119,15 @@ recordings: dict[int, tuple[asyncio.Task, Recording]] = {}
 
 
 async def callback(
-    app: Ariadne,
-    message: FriendMessage | GroupMessage,
     sender: int,
     title: str,
     owner: int,
 ):
     await asyncio.sleep(5 * 60)
-    await app.send_message(message, f"WARN: Timeout, auto stop recording {title}")
-    _background_task.add(asyncio.create_task(stop(app, message, sender, owner)))
+    app = Ariadne.current()
+    event = cast(FriendMessage | GroupMessage, app.broadcast.event_ctx.get())
+    await app.send_message(event, f"WARN: Timeout, auto stop recording {title}")
+    _background_task.add(asyncio.create_task(stop(sender, owner)))
 
 
 @channel.use(ListenerSchema([FriendMessage, GroupMessage], priority=32))
@@ -159,8 +159,8 @@ async def record(
             f"WARN: Max message length reached, auto stop recording {title} and start new recording {new_title}",
         )
 
-        await stop(app, message, owner)
-        await start(app, message, owner, new_title)
+        await stop(owner)
+        await start(owner, new_title)
 
         cb, recording = recordings[owner]
         cb.cancel()
@@ -181,7 +181,7 @@ async def record(
         )
     )
 
-    cb = asyncio.create_task(callback(app, message, owner, recording.title, owner))
+    cb = asyncio.create_task(callback(owner, recording.title, owner))
     _background_task.add(cb)
     cb.add_done_callback(_background_task.discard)
 
@@ -197,6 +197,7 @@ async def record(
                 "cmd" @ ParamMatch(True).space(PRESERVE),
                 "title" @ ParamMatch(True).space(PRESERVE),
                 "target" @ ArgumentMatch("--traget", "-t"),  # 本来想着这里是ElementMatch(At)
+                "page" @ ArgumentMatch("--page", "-p"),
                 "help" @ ArgumentMatch("--help", "-h", action="store_true"),
                 WildcardMatch(True, True),
             )
@@ -210,10 +211,12 @@ async def main(
     cmd: RegexResult,
     title: RegexResult,
     target: ArgResult,
+    page: ArgResult,
     help: ArgResult,
 ):
     # TODO: inherit from Generic to support ElementResult[At]
     target = cast(ArgResult[MessageChain], target)  # TODO: support TypeVar in Twilight
+    page = cast(ArgResult[MessageChain], page)
     help = cast(ArgResult[bool], help)
 
     if sender.id not in whitelist:
@@ -228,47 +231,40 @@ async def main(
 
     match command:
         case "start":
-            await start(
-                app,
-                message,
+            msg = await start(
                 sender.id,
                 str(title.result) if title.matched else None,
                 target.result[0].target if target.matched else None,  # type: ignore
             )
         case "stop":
-            await stop(
-                app,
-                message,
+            msg = await stop(
                 sender.id,
                 target.result[0].target if target.matched else None,  # type: ignore
             )
         case "show":
-            await show(app, message, str(title.result) if title.matched else None)
+            msg = await show(str(title.result) if title.matched else None)
+        case "list":
+            msg = await list_(int(str(page.result)) if page.matched else 0)
         case "help":
-            await app.send_message(message, cast(str, __doc__))
+            msg = cast(str, __doc__)
         case unknown_command:
-            await app.send_message(
-                message, f"Unknown command: {unknown_command}\n{__doc__}"
-            )
+            msg = f"Unknown command: {unknown_command}\n{__doc__}"
 
+    await app.send_message(message, msg)
     raise PropagationCancelled
 
 
 async def start(
-    app: Ariadne,
-    message: FriendMessage | GroupMessage,
-    sender: int,
-    title: str | None = None,
-    target: int | None = None,
-):
+    sender: int, title: str | None = None, target: int | None = None
+) -> MessageContainer:
     owner = target or sender
 
     if owner in recordings:
-        await app.send_message(
-            message,
-            ["ERROR: ", At(target) if target else "You", " are already being recorded"],
-        )
-        return
+        return [
+            "ERROR: ",
+            At(target) if target else "You",
+            " are already being recorded",
+        ]
 
     title = title or datetime.now().strftime("%Y-%m-%d_%H:%M:%S")
 
@@ -278,32 +274,22 @@ async def start(
                 select(func.count(Record.id)).where(Record.title == title)  # type: ignore
             )
         ).one():
-            await app.send_message(message, f"ERROR: Record {title} already exists")
-            return
+            return f"ERROR: Record {title} already exists"
 
-    recording = Recording(
-        title=title,
-        owner=owner,
-        message_chain=[],
-    )
+    recording = Recording(title=title, owner=owner, message_chain=[])
 
-    cb = asyncio.create_task(callback(app, message, sender, title, owner))
+    cb = asyncio.create_task(callback(sender, title, owner))
     _background_task.add(cb)
     cb.add_done_callback(_background_task.discard)
 
     recordings[owner] = (cb, recording)
-    await app.send_message(message, f"INFO: Start recording {title}")
+
+    return f"INFO: Start recording {title}"
 
 
-async def stop(
-    app: Ariadne,
-    message: FriendMessage | GroupMessage,
-    sender: int,
-    target: int | None = None,
-):
+async def stop(sender: int, target: int | None = None) -> MessageContainer:
     if not (recording := recordings.get(target or sender)):
-        return await app.send_message(
-            message,
+        return (
             ["ERROR: ", At(target) if target else "You", " are not being recorded"],
         )
 
@@ -323,14 +309,12 @@ async def stop(
         session.add(record)
         await session.commit()
 
-    await app.send_message(message, f"INFO: Stop recording {recording.title}")
+    return f"INFO: Stop recording {recording.title}"
 
 
-async def show(
-    app: Ariadne, message: FriendMessage | GroupMessage, title: str | None = None
-):
+async def show(title: str | None = None) -> MessageContainer:
     if title is None:
-        return await app.send_message(message, helps["show"])
+        return helps["show"]
 
     try:
         async with Session() as session:
@@ -339,8 +323,23 @@ async def show(
                     select(Record).where(Record.title == title)  # type: ignore # I don't know why...
                 )
             ).one()  # type: Record
-            message_chain = pickle.loads(record.message_chain)
+            msg = pickle.loads(record.message_chain)  # type: str
     except NoResultFound:
-        message_chain = f"ERROR: No matching record found for {title}"
+        msg = f"ERROR: No matching record found for {title}"
 
-    await app.send_message(message, message_chain)
+    return msg
+
+
+async def list_(page: int = 0) -> MessageContainer:
+    async with Session() as session:
+        records = await session.exec(
+            select(Record).order_by(Record.timestamp).offset(page * 10).limit(10)  # type: ignore
+        )  # type: Iterable[Record]
+
+        return (
+            "\n".join(
+                f"{record.title}@{record.owner}\n{datetime.fromtimestamp(record.timestamp/10**9)}"
+                for record in records
+            )
+            or "No record found"
+        )
