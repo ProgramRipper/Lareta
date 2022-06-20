@@ -8,24 +8,25 @@ from typing import TYPE_CHECKING, TypedDict, cast
 from graia.ariadne.app import Ariadne
 from graia.ariadne.event.message import FriendMessage, GroupMessage
 from graia.ariadne.message.chain import MessageChain
-from graia.ariadne.message.element import Forward, ForwardNode, MultimediaElement
+from graia.ariadne.message.element import At, Forward, ForwardNode, MultimediaElement
 from graia.ariadne.message.parser.twilight import (
     PRESERVE,
     ArgResult,
     ArgumentMatch,
     FullMatch,
     ParamMatch,
-    RegexMatch,
     RegexResult,
     Twilight,
+    WildcardMatch,
 )
 from graia.ariadne.model.relationship import Friend, Member
 from graia.broadcast.exceptions import PropagationCancelled
 from graia.saya import Channel, Saya
 from graia.saya.builtins.broadcast.schema import ListenerSchema
+from loguru import logger
 from sqlalchemy.exc import NoResultFound
 from sqlalchemy.orm.session import sessionmaker
-from sqlmodel import Field, SQLModel, select
+from sqlmodel import Field, SQLModel, func, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 from typing_extensions import NotRequired
 
@@ -120,14 +121,13 @@ recordings: dict[int, tuple[asyncio.Task, Recording]] = {}
 async def callback(
     app: Ariadne,
     message: FriendMessage | GroupMessage,
-    sender: Friend | Member,
-    recording: Recording,
+    sender: int,
+    title: str,
+    owner: int,
 ):
     await asyncio.sleep(5 * 60)
-    await app.send_message(
-        message, f"WARN: Timeout, auto stop recording {recording.title}"
-    )
-    _background_task.add(asyncio.create_task(stop(app, message, sender)))
+    await app.send_message(message, f"WARN: Timeout, auto stop recording {title}")
+    _background_task.add(asyncio.create_task(stop(app, message, sender, owner)))
 
 
 @channel.use(ListenerSchema([FriendMessage, GroupMessage], priority=32))
@@ -137,7 +137,9 @@ async def record(
     message_chain: MessageChain,
     sender: Friend | Member,
 ):
-    if not (recording := recordings.get(sender.id)):
+    owner = sender.id
+
+    if not (recording := recordings.get(owner)):
         return
 
     time = datetime.now()
@@ -157,10 +159,10 @@ async def record(
             f"WARN: Max message length reached, auto stop recording {title} and start new recording {new_title}",
         )
 
-        await stop(app, message, sender)
-        await start(app, message, sender, new_title)
+        await stop(app, message, owner)
+        await start(app, message, owner, new_title)
 
-        cb, recording = recordings[sender.id]
+        cb, recording = recordings[owner]
         cb.cancel()
 
     for element in message_chain:
@@ -179,11 +181,11 @@ async def record(
         )
     )
 
-    cb = asyncio.create_task(callback(app, message, sender, recording))
+    cb = asyncio.create_task(callback(app, message, owner, recording.title, owner))
     _background_task.add(cb)
     cb.add_done_callback(_background_task.discard)
 
-    recordings[sender.id] = (cb, recording)
+    recordings[owner] = (cb, recording)
 
 
 @channel.use(
@@ -192,10 +194,11 @@ async def record(
         inline_dispatchers=[
             Twilight(
                 FullMatch(prefix).space(PRESERVE),
-                "cmd" @ ParamMatch(True),
-                "title" @ ParamMatch(True),
+                "cmd" @ ParamMatch(True).space(PRESERVE),
+                "title" @ ParamMatch(True).space(PRESERVE),
+                "target" @ ArgumentMatch("--traget", "-t"),  # 本来想着这里是ElementMatch(At)
                 "help" @ ArgumentMatch("--help", "-h", action="store_true"),
-                RegexMatch(".*"),
+                WildcardMatch(True, True),
             )
         ],
     )
@@ -206,9 +209,12 @@ async def main(
     sender: Friend | Member,
     cmd: RegexResult,
     title: RegexResult,
+    target: ArgResult,
     help: ArgResult,
 ):
-    help = cast(ArgResult[bool], help)  # TODO: support TypeVar in Twilight
+    # TODO: inherit from Generic to support ElementResult[At]
+    target = cast(ArgResult[MessageChain], target)  # TODO: support TypeVar in Twilight
+    help = cast(ArgResult[bool], help)
 
     if sender.id not in whitelist:
         await app.send_message(message, "FATAL: Permission denied")
@@ -223,10 +229,19 @@ async def main(
     match command:
         case "start":
             await start(
-                app, message, sender, str(title.result) if title.matched else None
+                app,
+                message,
+                sender.id,
+                str(title.result) if title.matched else None,
+                target.result[0].target if target.matched else None,  # type: ignore
             )
         case "stop":
-            await stop(app, message, sender)
+            await stop(
+                app,
+                message,
+                sender.id,
+                target.result[0].target if target.matched else None,  # type: ignore
+            )
         case "show":
             await show(app, message, str(title.result) if title.matched else None)
         case "help":
@@ -242,13 +257,20 @@ async def main(
 async def start(
     app: Ariadne,
     message: FriendMessage | GroupMessage,
-    sender: Friend | Member,
+    sender: int,
     title: str | None = None,
+    target: int | None = None,
 ):
-    if sender.id in recordings:
-        await app.send_message(message, "ERROR: You are already being recorded")
+    owner = target or sender
+
+    if owner in recordings:
+        await app.send_message(
+            message,
+            ["ERROR: ", At(target) if target else "You", " are already being recorded"],
+        )
         return
-    from sqlmodel import func
+
+    title = title or datetime.now().strftime("%Y-%m-%d_%H:%M:%S")
 
     async with Session() as session:
         if (
@@ -260,26 +282,33 @@ async def start(
             return
 
     recording = Recording(
-        title=title or datetime.now().strftime("%Y-%m-%d_%H:%M:%S"),
-        owner=sender.id,
+        title=title,
+        owner=owner,
         message_chain=[],
     )
 
-    cb = asyncio.create_task(callback(app, message, sender, recording))
+    cb = asyncio.create_task(callback(app, message, sender, title, owner))
     _background_task.add(cb)
     cb.add_done_callback(_background_task.discard)
 
-    recordings[sender.id] = (cb, recording)
-    await app.send_message(message, f"INFO: Start recording {recording.title}")
+    recordings[owner] = (cb, recording)
+    await app.send_message(message, f"INFO: Start recording {title}")
 
 
 async def stop(
-    app: Ariadne, message: FriendMessage | GroupMessage, sender: Friend | Member
+    app: Ariadne,
+    message: FriendMessage | GroupMessage,
+    sender: int,
+    target: int | None = None,
 ):
-    if not (recording := recordings.get(sender.id)):
-        return await app.send_message(message, "ERROR: You are not being recorded")
+    if not (recording := recordings.get(target or sender)):
+        return await app.send_message(
+            message,
+            ["ERROR: ", At(target) if target else "You", " are not being recorded"],
+        )
 
-    del recordings[sender.id]
+    target = target or sender
+    del recordings[target]
     cb, recording = recording
     cb.cancel()
 
