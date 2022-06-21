@@ -1,23 +1,18 @@
 import asyncio
-from contextlib import suppress
-from itertools import repeat
 import json
 import pickle
 import re
+from contextlib import suppress
 from datetime import datetime
+from itertools import repeat
 from time import time_ns
 from typing import TYPE_CHECKING, TypedDict, cast
-from weakref import  WeakValueDictionary
+from weakref import WeakValueDictionary
 
 from graia.ariadne.app import Ariadne
-from graia.ariadne.event.message import FriendMessage, GroupMessage, MessageEvent
+from graia.ariadne.event.message import FriendMessage, GroupMessage
 from graia.ariadne.message.chain import MessageChain, MessageContainer
-from graia.ariadne.message.element import (
-    At,
-    Forward,
-    ForwardNode,
-    MultimediaElement,
-)
+from graia.ariadne.message.element import At, Forward, ForwardNode, MultimediaElement
 from graia.ariadne.message.parser.twilight import (
     PRESERVE,
     ArgumentMatch,
@@ -27,7 +22,7 @@ from graia.ariadne.message.parser.twilight import (
     Twilight,
     WildcardMatch,
 )
-from graia.ariadne.model.relationship import Friend, Member, Group
+from graia.ariadne.model.relationship import Friend, Group, Member
 from graia.broadcast.exceptions import PropagationCancelled
 from graia.saya import Channel, Saya
 from graia.saya.builtins.broadcast.schema import ListenerSchema
@@ -139,14 +134,15 @@ async def record(
         new_title = (
             f"{title[:result.start()]}({int(result[1])+1})" if result else f"{title}(1)"
         )
+        owner = recording.owner
 
         await app.send_message(
-            recording.owner,
+            owner.group if isinstance(owner, Member) else owner,
             f"WARN: Max message length reached, auto stop recording {title} and start recording {new_title}",
         )
 
         await _stop(title=title)
-        await _start(app, recording.owner, new_title, recording.targets)
+        await _start(app, owner, new_title, recording.targets)
 
         recording = recorded[target]
 
@@ -186,25 +182,26 @@ async def main(
 ):
     # TODO: inherit from Generic to support ElementResult[At]
     # TODO: support TypeVar in Twilight
+    target = sender.group if isinstance(sender, Member) else sender
     if sender.id not in whitelist:
-        await app.send_message(sender, "FATAL: Permission denied")
+        await app.send_message(target, "FATAL: Permission denied")
         raise PropagationCancelled
 
     command = str(cmd.result) if cmd.matched else "help"
 
     if command in helps:
-        await app.send_message(sender, helps[command])
+        await app.send_message(target, helps[command])
         raise PropagationCancelled
 
     msg = f"Unknown command: {command}\n{__doc__}"
 
-    await app.send_message(sender, msg)
+    await app.send_message(target, msg)
     raise PropagationCancelled
 
 
 async def _daemon(
     app: Ariadne,
-    owner: MessageEvent | Group | Friend | Member,
+    owner: Friend | Member,
     title: str,
 ):
     while True:
@@ -215,7 +212,10 @@ async def _daemon(
         await asyncio.sleep(delay)
 
     await asyncio.gather(
-        app.send_message(owner, f"WARN: Timeout, auto stop recording {title}"),
+        app.send_message(
+            owner.group if isinstance(owner, Member) else owner,
+            f"WARN: Timeout, auto stop recording {title}",
+        ),
         _stop(title=title),
     )
 
@@ -253,7 +253,7 @@ async def start(
         title_ = str(title.result)
 
     await app.send_message(
-        sender,
+        sender.group if isinstance(sender, Member) else sender,
         await _start(
             app,
             sender,
@@ -309,7 +309,8 @@ async def stop(
     title: RegexResult,
 ):
     await app.send_message(
-        sender, await _stop(sender.id, str(title.result) if title.matched else None)
+        sender.group if isinstance(sender, Member) else sender,
+        await _stop(sender.id, str(title.result) if title.matched else None),
     )
     raise PropagationCancelled
 
@@ -396,7 +397,7 @@ async def list_(
     num: RegexResult,
 ):
     await app.send_message(
-        sender,
+        sender.group if isinstance(sender, Member) else sender,
         await _list(
             int(str(page.result)) if page.matched else 0,
             int(str(num.result)) if page.matched else 10,
