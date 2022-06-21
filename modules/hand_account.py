@@ -4,6 +4,7 @@ import pickle
 import re
 from contextlib import suppress
 from datetime import datetime
+from difflib import get_close_matches
 from itertools import repeat
 from time import time_ns
 from typing import TYPE_CHECKING, Any, TypedDict, cast
@@ -70,7 +71,7 @@ __doc__ = (
         "help" @ ParamMatch().help("显示帮助"),
     )
     .get_help(
-        f"{prefix} {{command}}",
+        f"{prefix} <command>",
         "魔女手账",
         f"{channel.meta['name']}@{channel.meta['author'][0]}",
     )
@@ -83,7 +84,7 @@ helps: dict[str, str] = {
         "title" @ ParamMatch().help("标题（可选，默认为当前时间 %Y-%m-%d_%H:%M:%S）"),
         "target"
         @ WildcardMatch().help(
-            "目标（可选，默认为仅发送者。可指定多个目标。注意：如果指定了目标，默认不包含发送者，可以@自己以显示指定记录目标）"
+            "目标（可选，默认为仅发送者。可指定多个目标。注意：如果指定了目标，默认不包含发送者，可以@自己以显式指定发送者为目标）"
         ),
     )
     .get_help(f"{prefix} start [title [*target]]", "开始记录")
@@ -96,7 +97,7 @@ helps: dict[str, str] = {
     "show": Twilight(
         "title" @ ParamMatch().help("标题"),
     )
-    .get_help(f"{prefix} show {{title}}", "显示记录")
+    .get_help(f"{prefix} show <title>", "显示记录")
     .replace("\n\n", "\n"),
     "list": Twilight(
         "page" @ ParamMatch().help("页数（可选，默认为 0）"),
@@ -105,9 +106,11 @@ helps: dict[str, str] = {
     .get_help(f"{prefix} list [page [num]]", "列出记录")
     .replace("\n\n", "\n"),
     "del": Twilight("title" @ ParamMatch().help("标题"))
-    .get_help(f"{prefix} del {{title}}", "删除记录")
+    .get_help(f"{prefix} del <title>", "删除记录")
     .replace("\n\n", "\n"),
-    "help": __doc__,
+    "help": Twilight("command" @ ParamMatch().help("命令（可选，默认为模块帮助）"))
+    .get_help(f"{prefix} help [command]", "帮助")
+    .replace("\n\n", "\n"),
 }
 
 
@@ -199,15 +202,10 @@ async def main(
     # TODO: inherit from Generic to support ElementResult[At]
     # TODO: support TypeVar in Twilight
     target = sender.group if isinstance(sender, Member) else sender
-    command = str(cmd.result) if cmd.matched else "help"
 
-    if command in helps:
-        await app.send_message(target, helps[command])
-        raise PropagationCancelled
-
-    msg = f"Unknown command: {command}\n{__doc__}"
-
-    await app.send_message(target, msg)
+    await app.send_message(
+        target, await _help(str(cmd.result) if cmd.matched else None)
+    )
     raise PropagationCancelled
 
 
@@ -488,3 +486,31 @@ async def _del(title: str):
             return f"INFO: {title} has been deleted"
 
     return "ERROR: No such record"
+
+
+@channel.use(
+    ListenerSchema(
+        [FriendMessage, GroupMessage],
+        inline_dispatchers=[
+            Twilight(
+                FullMatch(prefix).space(PRESERVE),
+                FullMatch("help").space(PRESERVE),
+                "cmd" @ ParamMatch(True),
+            )
+        ],
+    )
+)
+async def help_(app: Ariadne, message: FriendMessage | GroupMessage, cmd: RegexResult):
+    await app.send_message(
+        message, await _help(str(cmd.result) if cmd.matched else None)
+    )
+    raise PropagationCancelled
+
+
+async def _help(cmd: str | None = None) -> MessageContainer:
+    if not cmd:
+        return cast(str, __doc__)
+    elif cmd in helps:
+        return helps[cmd]
+    close_match = get_close_matches(cmd, helps, 1)
+    return f"ERROR: Unknown command {cmd}{f' - maybe you meant {close_match[0]}'if close_match else ''}"
