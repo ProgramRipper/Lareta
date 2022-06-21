@@ -66,6 +66,7 @@ __doc__ = (
         "stop" @ ParamMatch().help("停止记录"),
         "list" @ ParamMatch().help("列出记录"),
         "show" @ ParamMatch().help("显示记录"),
+        "del" @ ParamMatch().help("删除记录"),
         "help" @ ParamMatch().help("显示帮助"),
     )
     .get_help(
@@ -102,6 +103,9 @@ helps: dict[str, str] = {
         "num" @ ParamMatch().help("每页项数（可选，默认为 10）"),
     )
     .get_help(f"{prefix} list [page [num]]", "列出记录")
+    .replace("\n\n", "\n"),
+    "del": Twilight("title" @ ParamMatch().help("标题"))
+    .get_help(f"{prefix} del {{title}}", "删除记录")
     .replace("\n\n", "\n"),
     "help": __doc__,
 }
