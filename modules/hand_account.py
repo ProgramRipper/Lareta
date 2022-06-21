@@ -126,7 +126,7 @@ class Record(Recording, table=True):
     targets: str  # list[int] in json format
 
 
-recorded: WeakValueDictionary[int, Recording] = WeakValueDictionary()  # id to recording
+recorded: dict[int, Recording] = {}  # id to recording
 recordings: dict[str, tuple[asyncio.Task, Recording]] = {}  # title to recording
 
 
@@ -303,9 +303,13 @@ async def _start(
     title: str | None = None,
     targets: list[int] | None = None,
 ) -> MessageContainer:
+    targets = targets or [owner.id]
+    if l := tuple(filter(recorded.__contains__, targets)):
+        return ["ERROR: ", *map(At, l), " are already being recorded"]
+
     title = title or datetime.now().strftime("%Y-%m-%d_%H:%M:%S")
     if title in recordings:
-        return f"ERROR: {title} is already being recorded"
+        return f"ERROR: {title} is recording"
     async with Session() as session:
         if (
             await session.exec(
@@ -313,8 +317,6 @@ async def _start(
             )
         ).one():
             return f"ERROR: Record {title} already exists"
-
-    targets = targets or [owner.id]
 
     recording = Recording(message_chain=[], owner=owner, targets=targets, title=title)
     daemon = asyncio.create_task(_daemon(app, owner, title))
@@ -362,6 +364,8 @@ async def _stop(sender: int = 0, title: str | None = None) -> MessageContainer:
     with suppress(asyncio.CancelledError):
         await daemon
     del recordings[title]
+    for target in recording.targets:
+        del recorded[target]
 
     message_chain = MessageChain([Forward(recording.message_chain)])
 
