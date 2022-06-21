@@ -132,7 +132,7 @@ dependencies = [
 
 [[package]]
 name = "graia-ariadne"
-version = "0.7.12"
+version = "0.7.13"
 requires_python = ">=3.8,<4.0"
 summary = "Another elegant Python QQ Bot framework for mirai and mirai-api-http v2."
 dependencies = [
@@ -145,13 +145,13 @@ dependencies = [
 
 [[package]]
 name = "graia-ariadne"
-version = "0.7.12"
+version = "0.7.13"
 extras = ["full"]
 requires_python = ">=3.8,<4.0"
 summary = "Another elegant Python QQ Bot framework for mirai and mirai-api-http v2."
 dependencies = [
     "arclet-alconna-graia<0.1,>=0.0",
-    "graia-ariadne<0.8.0,>=0.7.12",
+    "graia-ariadne<0.8.0,>=0.7.13",
     "graia-saya<0.1,>=0.0",
     "graia-scheduler<0.1,>=0.0",
     "richuru<0.2.0,>=0.1.0",
@@ -359,7 +359,7 @@ dependencies = [
 
 [metadata]
 lock_version = "3.1"
-content_hash = "sha256:41ca19918a440d29d558258df5e3394c047f0f671a39aad190dccc34d1b7ba79"
+content_hash = "sha256:0d39c3f9207bc223d42ef4090d4c1db6951523e5301583e92e4fe0f209afd351"
 
 [metadata.files]
 "aiohttp 3.8.1" = [
@@ -568,9 +568,9 @@ content_hash = "sha256:41ca19918a440d29d558258df5e3394c047f0f671a39aad190dccc34d
     {file = "graia_amnesia-0.5.2-py3-none-any.whl", hash = "sha256:8f5c3fa216cdc198a17b93c420ec339f007e5b44dec6a434a5276bcaf9aeca0f"},
     {file = "graia-amnesia-0.5.2.tar.gz", hash = "sha256:3721d91c55feee1db2dd9ccade4801492b779f8164be172e7a9fad7cf6f80108"},
 ]
-"graia-ariadne 0.7.12" = [
-    {file = "graia_ariadne-0.7.12-py3-none-any.whl", hash = "sha256:0e981577ee3f41ddc8e3d01b420afb996df7e8461b4e76aa813d9b5f6999f66d"},
-    {file = "graia-ariadne-0.7.12.tar.gz", hash = "sha256:ef6e4ab23897678083ec9f19a060203fa50c2dec18e8efac9096e118e8d714a6"},
+"graia-ariadne 0.7.13" = [
+    {file = "graia_ariadne-0.7.13-py3-none-any.whl", hash = "sha256:af402169e7190a06a4aaced312b19fa57cc9f6a4d426d565de478c85e97cffe9"},
+    {file = "graia-ariadne-0.7.13.tar.gz", hash = "sha256:5d4a14f2c611e33a255eced07e28bc249d92eebc847d7ba361ace3c00ef2a840"},
 ]
 "graia-broadcast 0.17.5" = [
     {file = "graia_broadcast-0.17.5-py3-none-any.whl", hash = "sha256:57297f382b7a0cdb7b9a9aed19c1f68cbe21fa3024c572df20ebcf8035062e84"},

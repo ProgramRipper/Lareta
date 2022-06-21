@@ -49,7 +49,7 @@ async def on_app_launched() -> None:
 
 @channel.use(ListenerSchema([SayaModuleInstalled, SayaModuleUninstall]))
 async def module_event_listener(
-    app: Ariadne, event: SayaModuleInstalled | SayaModuleUninstalled, channel: Channel
+    event: SayaModuleInstalled | SayaModuleUninstalled, channel: Channel
 ):
     meta = channel.meta  # type: ChannelMeta
     authors = meta["author"]  # type: list[str]

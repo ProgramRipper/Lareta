@@ -12,7 +12,6 @@ bcc = app.broadcast
 saya = Saya(bcc)
 
 saya.install_behaviours(BroadcastBehaviour(bcc))
-saya.mount("__main__._background_task", set())
 
 
 class ConfigType(TypedDict):
