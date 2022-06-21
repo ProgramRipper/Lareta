@@ -1,6 +1,7 @@
 import asyncio
 import json
 import pickle
+from queue import Full
 import re
 from contextlib import suppress
 from datetime import datetime
@@ -60,18 +61,20 @@ env: EnvType = saya.current_env()
 prefix = env.get("prefix", "/record")
 whitelist = set(env.get("whitelist", [sudoer]))
 
-__doc__ = Twilight(
-    "start" @ ParamMatch().help("开始记录"),
-    "stop" @ ParamMatch().help("停止记录"),
-    "clear" @ ParamMatch().help("清空记录"),
-    "list" @ ParamMatch().help("列出记录"),
-    "show" @ ParamMatch().help("显示记录"),
-    "help" @ ParamMatch().help("显示帮助"),
-    ArgumentMatch("--help", "-h", action="store_true").help("显示帮助"),
-).get_help(
-    f"{prefix} {{command}}",
-    "魔女手账",
-    f"{channel.meta['name']}@{channel.meta['author'][0]}",
+__doc__ = (
+    Twilight(
+        "start" @ ParamMatch().help("开始记录"),
+        "stop" @ ParamMatch().help("停止记录"),
+        "list" @ ParamMatch().help("列出记录"),
+        "show" @ ParamMatch().help("显示记录"),
+        "help" @ ParamMatch().help("显示帮助"),
+    )
+    .get_help(
+        f"{prefix} {{command}}",
+        "魔女手账",
+        f"{channel.meta['name']}@{channel.meta['author'][0]}",
+    )
+    .replace("\n\n", "\n")
 )
 channel.description(__doc__)
 
@@ -82,17 +85,25 @@ helps: dict[str, str] = {
         @ WildcardMatch().help(
             "目标（可选，默认为仅发送者。可指定多个目标。注意：如果指定了目标，默认不包含发送者，可以@自己以显示指定记录目标）"
         ),
-    ).get_help(f"{prefix} start [title [*target]]", "开始记录"),
+    )
+    .get_help(f"{prefix} start [title [*target]]", "开始记录")
+    .replace("\n\n", "\n"),
     "stop": Twilight(
         "title" @ ParamMatch().help("标题（可选，默认为发送者的当前的记录）"),
-    ).get_help(f"{prefix} stop [title]", "停止记录"),
+    )
+    .get_help(f"{prefix} stop [title]", "停止记录")
+    .replace("\n\n", "\n"),
     "show": Twilight(
         "title" @ ParamMatch().help("标题"),
-    ).get_help(f"{prefix} show {{title}}", "显示记录"),
+    )
+    .get_help(f"{prefix} show {{title}}", "显示记录")
+    .replace("\n\n", "\n"),
     "list": Twilight(
         "page" @ ParamMatch().help("页数（可选，默认为 0）"),
         "num" @ ParamMatch().help("每页项数（可选，默认为 10）"),
-    ).get_help(f"{prefix} list [page [num]]", "列出记录"),
+    )
+    .get_help(f"{prefix} list [page [num]]", "列出记录")
+    .replace("\n\n", "\n"),
     "help": __doc__,
 }
 
@@ -174,6 +185,7 @@ async def record(
                 WildcardMatch(True, True),
             )
         ],
+        priority=17,
     )
 )
 async def main(
@@ -184,10 +196,6 @@ async def main(
     # TODO: inherit from Generic to support ElementResult[At]
     # TODO: support TypeVar in Twilight
     target = sender.group if isinstance(sender, Member) else sender
-    if sender.id not in whitelist:
-        await app.send_message(target, "FATAL: Permission denied")
-        raise PropagationCancelled
-
     command = str(cmd.result) if cmd.matched else "help"
 
     if command in helps:
@@ -198,6 +206,27 @@ async def main(
 
     await app.send_message(target, msg)
     raise PropagationCancelled
+
+
+@channel.use(
+    ListenerSchema(
+        [FriendMessage, GroupMessage],
+        inline_dispatchers=[
+            Twilight(
+                FullMatch(prefix).space(PRESERVE),
+                WildcardMatch(True, True),
+            )
+        ],
+        priority=0,
+    )
+)
+async def permission(app: Ariadne, sender: Friend | Member):
+    if sender.id not in whitelist:
+        await app.send_message(
+            sender.group if isinstance(sender, Member) else sender,
+            "FATAL: Permission denied",
+        )
+        raise PropagationCancelled
 
 
 async def _daemon(
@@ -420,3 +449,19 @@ async def _list(page: int = 0, num: int = 10) -> MessageContainer:
             )
             or "No record found"
         )
+
+
+@channel.use(
+    ListenerSchema(
+        [FriendMessage, GroupMessage],
+        inline_dispatchers=[
+            Twilight(
+                FullMatch(prefix).space(PRESERVE),
+                FullMatch("del").space(PRESERVE),
+                "title" @ ParamMatch(),
+            )
+        ],
+    )
+)
+async def del_(app: Ariadne, message: FriendMessage | GroupMessage):
+    pass
