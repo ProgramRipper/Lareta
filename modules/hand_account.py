@@ -93,6 +93,7 @@ helps: dict[str, str] = {
         "page" @ ParamMatch().help("页数（可选，默认为 0）"),
         "num" @ ParamMatch().help("每页项数（可选，默认为 10）"),
     ).get_help(f"{prefix} list [page [num]]", "列出记录"),
+    "help": __doc__,
 }
 
 
