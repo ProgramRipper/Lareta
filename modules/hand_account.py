@@ -1,13 +1,12 @@
 import asyncio
 import json
 import pickle
-from queue import Full
 import re
 from contextlib import suppress
 from datetime import datetime
 from itertools import repeat
 from time import time_ns
-from typing import TYPE_CHECKING, TypedDict, cast
+from typing import TYPE_CHECKING, Any, TypedDict, cast
 from weakref import WeakValueDictionary
 
 from graia.ariadne.app import Ariadne
@@ -16,17 +15,17 @@ from graia.ariadne.message.chain import MessageChain, MessageContainer
 from graia.ariadne.message.element import At, Forward, ForwardNode, MultimediaElement
 from graia.ariadne.message.parser.twilight import (
     PRESERVE,
-    ArgumentMatch,
     FullMatch,
     ParamMatch,
     RegexResult,
     Twilight,
     WildcardMatch,
 )
-from graia.ariadne.model.relationship import Friend, Group, Member
+from graia.ariadne.model.relationship import Friend, Member
 from graia.broadcast.exceptions import PropagationCancelled
 from graia.saya import Channel, Saya
 from graia.saya.builtins.broadcast.schema import ListenerSchema
+from pydantic import validator
 from sqlalchemy.exc import NoResultFound
 from sqlalchemy.orm.session import sessionmaker
 from sqlmodel import Field, SQLModel, func, select
@@ -110,7 +109,7 @@ helps: dict[str, str] = {
 
 class Recording(SQLModel):
     message_chain: list[ForwardNode]
-    owner: Friend | Member
+    owner: Any
     targets: list[int]
     timestamp: int = Field(default_factory=time_ns)
     title: str = Field(index=True)
@@ -237,7 +236,7 @@ async def _daemon(
     while True:
         if not (recording := recordings.get(title)):
             return
-        if (delay := recording[1].timestamp - time_ns()) / 10**9 <= 0:
+        if (delay := recording[1].timestamp - time_ns() / 10**9 + 5 * 60) <= 0:
             break
         await asyncio.sleep(delay)
 
@@ -316,7 +315,8 @@ async def _start(
     recording = Recording(message_chain=[], owner=owner, targets=targets, title=title)
     daemon = asyncio.create_task(_daemon(app, owner, title))
     recordings[title] = (daemon, recording)
-    map(recorded.__setitem__, targets, repeat(recording))
+    for target in targets:
+        recorded[target] = recording
 
     return f"INFO: Start recording {title}"
 
@@ -463,5 +463,20 @@ async def _list(page: int = 0, num: int = 10) -> MessageContainer:
         ],
     )
 )
-async def del_(app: Ariadne, message: FriendMessage | GroupMessage):
-    pass
+async def del_(app: Ariadne, message: FriendMessage | GroupMessage, title: RegexResult):
+    await app.send_message(message, await _del(str(title.result)))
+    raise PropagationCancelled
+
+
+async def _del(title: str):
+    async with Session() as session:
+        if record := (
+            await session.exec(
+                select(Record).where(Record.title == title)  # type: ignore
+            )
+        ).one_or_none():
+            await session.delete(record)
+            await session.commit()
+            return f"INFO: {title} has been deleted"
+
+    return "ERROR: No such record"
