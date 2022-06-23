@@ -7,7 +7,8 @@ from graia.saya import Saya
 from graia.saya.builtins.broadcast import BroadcastBehaviour
 from typing_extensions import NotRequired, Required
 
-app = Ariadne(ariadne_config(**json.load(open(".secret.json"))))
+secret = json.load(open(".secret.json"))
+app = Ariadne(ariadne_config(secret["account"], secret["verify_key"]))
 bcc = app.broadcast
 saya = Saya(bcc)
 
@@ -31,6 +32,5 @@ with saya.module_context():
 
     for module, env in config["modules"].items():
         saya.require(f"{modules_path}.{module}", env or {})
-
 
 app.launch_blocking()
