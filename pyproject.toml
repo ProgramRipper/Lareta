@@ -9,9 +9,10 @@ authors = [
     {name = "RF-Tar-Railt", email = "3165388245@qq.com"},
 ]
 dependencies = [
-    "graia-ariadne[full]>=0.7.14,<0.8.0",
+    "graia-ariadne[full] @ https://hub.fastgit.xyz/GraiaProject/Ariadne/archive/refs/heads/dev.zip",
     "sqlmodel>=0.0.6",
     "aiosqlite>=0.17.0",
+    "creart-graia>=0.1.4",
 ]
 requires-python = ">=3.10"
 license = {text = "AGPL-3.0-only"}
