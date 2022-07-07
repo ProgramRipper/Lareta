@@ -6,13 +6,19 @@ from typing import TYPE_CHECKING
 from graia.ariadne.app import Ariadne
 from graia.ariadne.event.message import FriendMessage, GroupMessage
 from graia.ariadne.message.commander.saya import CommandSchema
-from graia.ariadne.message.element import At, AtAll, Forward, ForwardNode, Source
+from graia.ariadne.message.element import (
+    At,
+    AtAll,
+    Forward,
+    ForwardNode,
+    MultimediaElement,
+    Source,
+)
 from graia.ariadne.model.relationship import Friend, Member
 from graia.ariadne.util.interrupt import EventWaiter
 from graia.ariadne.util.validator import CertainFriend, CertainGroup, CertainMember
 from graia.broadcast.exceptions import PropagationCancelled
 from graia.saya import Channel, Saya
-from loguru import logger
 from sqlalchemy.exc import IntegrityError, NoResultFound
 from sqlmodel import JSON, Column, Field, SQLModel, select
 
@@ -192,6 +198,10 @@ async def _start(title: str, owner: int, waiter: EventWaiter):
                     return
                 elif msg.startswith("/"):
                     continue
+
+                asyncio.gather(
+                    e.get_bytes() for e in message if isinstance(e, MultimediaElement)
+                )
 
                 record.message.node_list.append(
                     ForwardNode(
