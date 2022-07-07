@@ -204,12 +204,13 @@ async def _start(title: str, owner: int, waiter: EventWaiter):
                 )
 
                 record.message.node_list.append(
-                    ForwardNode(
+                    node := ForwardNode(
                         event.sender,
                         message.get_first(Source).time,
                         message,
                     )
                 )
+                node.sender_name = None
 
             await session.commit()
             future.cancel()
