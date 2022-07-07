@@ -10,6 +10,7 @@ authors = [
 ]
 dependencies = [
     "graia-ariadne[full] @ https://hub.fastgit.xyz/GraiaProject/Ariadne/archive/refs/heads/dev.zip",
+    "graia-broadcast @ https://hub.fastgit.xyz/GraiaProject/BroadcastControl/archive/refs/heads/master.zip",
     "sqlmodel>=0.0.6",
     "aiosqlite>=0.17.0",
     "creart-graia>=0.1.4",
