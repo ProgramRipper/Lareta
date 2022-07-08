@@ -1,5 +1,6 @@
 import asyncio
 import re
+from collections import ChainMap
 from datetime import datetime
 from typing import TYPE_CHECKING
 
@@ -132,6 +133,7 @@ async def start2(
             ],
         )
 
+    waiter.block_propagation = True
     coro = _start(title, event.sender.id, waiter)
 
     try:
@@ -156,7 +158,6 @@ async def start2(
 
 
 async def _start(title: str, owner: int, waiter: EventWaiter):
-    waiter.block_propagation = True
     async with session_maker() as session:
         while True:
             if (
@@ -190,13 +191,15 @@ async def _start(title: str, owner: int, waiter: EventWaiter):
 
                 event = task.result()
                 message = event.message_chain
+                time = message.get_first(Source).time
+                message = message.as_sendable()
 
                 if (
                     msg := str(message).strip()
                 ) == f"{prefix} stop" and event.sender.id in permission.whitelist:
                     await session.commit()
                     return
-                elif msg.startswith("/"):
+                elif msg.startswith("/") or not message.content:
                     continue
 
                 asyncio.gather(
@@ -204,13 +207,12 @@ async def _start(title: str, owner: int, waiter: EventWaiter):
                 )
 
                 record.message.node_list.append(
-                    node := ForwardNode(
+                    ForwardNode(
                         event.sender,
-                        message.get_first(Source).time,
+                        time,
                         message,
                     )
                 )
-                node.sender_name = None
 
             await session.commit()
             future.cancel()
