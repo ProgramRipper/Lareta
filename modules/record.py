@@ -1,6 +1,5 @@
 import asyncio
 import re
-from collections import ChainMap
 from datetime import datetime
 from typing import TYPE_CHECKING
 
@@ -51,7 +50,7 @@ class Record(SQLModel, table=True):
     title: str = Field(primary_key=True)
     time: datetime = Field(default_factory=datetime.now)
     owner: int
-    message: Forward = Field(sa_column=Column(JSON))
+    message: list[ForwardNode] = Field(default_factory=list, sa_column=Column(JSON))
 
     class Config:
         arbitrary_types_allowed = True
@@ -67,7 +66,7 @@ async def new(
     title: str,
 ):
     try:
-        record = Record(title=title, owner=sender.id, message=Forward([]))
+        record = Record(title=title, owner=sender.id)
 
         async with session_maker() as session:
             session.add(record)
@@ -168,11 +167,11 @@ async def _start(title: str, owner: int, waiter: EventWaiter):
             ):
                 raise ValueError(f"Record {title} already exists")
 
-            session.add(record := Record(title=title, owner=owner, message=Forward([])))
+            session.add(record := Record(title=title, owner=owner))
             future = recording[title] = asyncio.get_running_loop().create_future()
             yield title
 
-            while len(record.message.node_list) < 100:
+            while len(record.message) < 100:
                 task: asyncio.Task[FriendMessage | GroupMessage] = asyncio.create_task(
                     inc.wait(waiter, 15, timeout=5 * 60)
                 )
@@ -206,7 +205,7 @@ async def _start(title: str, owner: int, waiter: EventWaiter):
                     e.get_bytes() for e in message if isinstance(e, MultimediaElement)
                 )
 
-                record.message.node_list.append(
+                record.message.append(
                     ForwardNode(
                         event.sender,
                         time,
@@ -242,14 +241,72 @@ async def stop2(app: Ariadne, event: FriendMessage | GroupMessage):
     raise PropagationCancelled
 
 
-@channel.use(CommandSchema(f"{prefix} show {{title: str}}", decorators=[permission]))
-async def show(app: Ariadne, event: FriendMessage | GroupMessage, title: str):
+# TODO: commander 支持多个可选参数
+# @channel.use(
+#    CommandSchema(
+#        f"{prefix} show {{title: str}} {{i: int = None}} {{j: int = None}} {{k: int = None}}",
+#        decorators=[permission],
+#    )
+# )
+@channel.use(
+    CommandSchema(
+        f"{prefix} show {{title: str}}",
+        decorators=[permission],
+    )
+)
+def show(
+    app: Ariadne,
+    event: FriendMessage | GroupMessage,
+    title: str,
+):
+    return show4(app, event, title, None, None, None)
+
+
+@channel.use(
+    CommandSchema(
+        f"{prefix} show {{title: str}} {{stop: int}}",
+        decorators=[permission],
+    )
+)
+def show2(app: Ariadne, event: FriendMessage | GroupMessage, title: str, stop: int):
+    return show4(app, event, title, stop, None, None)
+
+
+@channel.use(
+    CommandSchema(
+        f"{prefix} show {{title: str}} {{start: int}} {{stop: int}}",
+        decorators=[permission],
+    )
+)
+def show3(
+    app: Ariadne, event: FriendMessage | GroupMessage, title: str, start: int, stop: int
+):
+    return show4(app, event, title, start, stop, None)
+
+
+@channel.use(
+    CommandSchema(
+        f"{prefix} show {{title: str}} {{i: int}} {{j: int}} {{k: int}}",
+        decorators=[permission],
+    )
+)
+async def show4(
+    app: Ariadne,
+    event: FriendMessage | GroupMessage,
+    title: str,
+    i: int | None,
+    j: int | None,
+    k: int | None,
+):
     try:
         async with session_maker() as session:
             record: Record = (await session.exec(select(Record).where(Record.title == title))).one()  # type: ignore
+            await app.send_message(
+                event, Forward(record.message[i : j : k if j or k else i])
+            )
     except NoResultFound:
         await app.send_message(event, f"ERROR: Record {title} does not exist")
-    else:
-        await app.send_message(event, record.message)
+    except IndexError:
+        await app.send_message(event, "ERROR: List index out of range")
 
     raise PropagationCancelled
