@@ -1,5 +1,5 @@
 import json
-from typing import TypedDict
+from typing import Any, TypedDict
 
 from graia.ariadne.entry import Ariadne
 from graia.ariadne.entry import config as ariadne_config
@@ -11,6 +11,7 @@ from graia.broadcast.interfaces.decorator import DecoratorInterface
 from graia.broadcast.interrupt import InterruptControl
 from graia.saya import Saya
 from graia.saya.builtins.broadcast import BroadcastBehaviour
+from loguru import logger
 from typing_extensions import NotRequired, Required
 
 secret = json.load(open(".secret.json"))
@@ -31,8 +32,7 @@ saya.install_behaviours(CommanderBehaviour(Commander(bcc)))
 class ConfigType(TypedDict):
     database_url: NotRequired[str]
     debug: NotRequired[bool]
-    modules: NotRequired[dict[str, dict | None]]
-    modules_path: NotRequired[str]
+    modules: NotRequired[dict[str, Any]]
     sudoer: Required[int]
     whitelist: NotRequired[list[int]]
 
@@ -53,10 +53,13 @@ class PermissionDecorator(Decorator):
 saya.mount("__main__.PermissionDecorator", PermissionDecorator())
 
 with saya.module_context():
-    modules_path = config.get("modules_path", "modules")
-    saya.require(modules_path)
+    saya.require("modules")
 
-    for module, env in config["modules"].items():
-        saya.require(f"{modules_path}.{module}", env or {})
+    modules = config.get("modules", {})
+    for module, env in modules.items():
+        try:
+            saya.require(f"modules.{module}", env)
+        except ModuleNotFoundError as e:
+            logger.error(e)
 
 app.launch_blocking()

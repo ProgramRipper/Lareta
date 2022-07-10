@@ -2,6 +2,5 @@
     "database_url": "sqlite+aiosqlite:///:memory:",
     "debug": true,
     "modules": {},
-    "modules_path": "modules",
     "sudoer": 123456789
 }

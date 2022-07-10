@@ -13,12 +13,7 @@ from graia.broadcast.builtin.event import ExceptionThrowed
 from graia.broadcast.exceptions import PropagationCancelled
 from graia.saya import Saya
 from graia.saya.builtins.broadcast.schema import ListenerSchema
-from graia.saya.channel import Channel, ChannelMeta
-from graia.saya.event import (
-    SayaModuleInstalled,
-    SayaModuleUninstall,
-    SayaModuleUninstalled,
-)
+from graia.saya.channel import Channel
 from loguru import logger
 from pydantic.main import BaseModel
 from sqlalchemy.ext.asyncio.engine import create_async_engine
@@ -97,20 +92,6 @@ async def exception_handler(
 async def on_app_launched() -> None:
     async with engine.begin() as conn:
         await conn.run_sync(SQLModel.metadata.create_all)
-
-
-@channel.use(ListenerSchema([SayaModuleInstalled, SayaModuleUninstall]))
-async def module_event_listener(
-    event: SayaModuleInstalled | SayaModuleUninstalled, channel: Channel
-):
-    meta = channel.meta  # type: ChannelMeta
-    authors = meta["author"]  # type: list[str]
-    announcement = (
-        f"{meta['name'] or event.module}"
-        f"@{authors[0] if authors else 'Unknown'}"
-        f" {'installed' if isinstance(event, SayaModuleInstalled) else 'uninstalled'}"
-    )
-    logger.success(announcement)
 
 
 @channel.use(
