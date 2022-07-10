@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING
 
 from graia.ariadne.app import Ariadne
 from graia.ariadne.event.message import FriendMessage, GroupMessage
+from graia.ariadne.message.commander import Arg
 from graia.ariadne.message.commander.saya import CommandSchema
 from graia.ariadne.message.element import (
     At,
@@ -162,7 +163,9 @@ async def _start(title: str, owner: int, waiter: EventWaiter):
             if (
                 title in recording
                 or (
-                    await session.exec(select(Record).where(Record.title == title))  # type: ignore
+                    await session.exec(
+                        select(Record).where(Record.title == title)  # type: ignore
+                    )
                 ).first()
             ):
                 raise ValueError(f"Record {title} already exists")
@@ -300,18 +303,56 @@ async def show4(
 ):
     try:
         async with session_maker() as session:
-            record: Record = (await session.exec(select(Record).where(Record.title == title))).one()  # type: ignore
-            await app.send_message(
-                event,
-                Forward(
-                    [record.message[i]]
-                    if i is not None and j is None and k is None
-                    else record.message[i:j:k]
-                ),
-            )
+            record: Record = (
+                await session.exec(
+                    select(Record).where(Record.title == title)  # type: ignore
+                )
+            ).one()
+        await app.send_message(
+            event,
+            Forward(
+                [record.message[i]]
+                if i is not None and j is None and k is None
+                else record.message[i:j:k]
+            ),
+        )
     except NoResultFound:
         await app.send_message(event, f"ERROR: Record {title} does not exist")
     except IndexError:
         await app.send_message(event, "ERROR: List index out of range")
+
+    raise PropagationCancelled
+
+
+@channel.use(
+    CommandSchema(
+        f"{prefix} list",
+        {
+            "page": Arg("[-p | --page] {page}", int, 0),
+            "num": Arg("[-n | --num] {num}", int, 10),
+        },
+        decorators=[permission],
+    )
+)
+async def list_(app: Ariadne, event: FriendMessage | GroupMessage, page: int, num: int):
+    async with session_maker() as session:
+        records: list[Record] = (
+            await session.exec(
+                select(Record)
+                .order_by(Record.time)
+                .offset(page * num)
+                .limit(num)  # type: ignore
+            )
+        ).all()
+
+    if records:
+        await app.send_message(
+            event,
+            "\n".join(
+                f"{record.title}@{record.owner}\n{record.time}" for record in records
+            ),
+        )
+    else:
+        await app.send_message(event, "No record found")
 
     raise PropagationCancelled
