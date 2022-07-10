@@ -302,7 +302,12 @@ async def show4(
         async with session_maker() as session:
             record: Record = (await session.exec(select(Record).where(Record.title == title))).one()  # type: ignore
             await app.send_message(
-                event, Forward(record.message[i : j : k if j or k else i])
+                event,
+                Forward(
+                    [record.message[i]]
+                    if i is not None and j is None and k is None
+                    else record.message[i:j:k]
+                ),
             )
     except NoResultFound:
         await app.send_message(event, f"ERROR: Record {title} does not exist")
