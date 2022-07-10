@@ -9,15 +9,12 @@ authors = [
     {name = "RF-Tar-Railt", email = "3165388245@qq.com"},
 ]
 dependencies = [
-    "graia-ariadne[full] @ https://hub.fastgit.xyz/GraiaProject/Ariadne/archive/refs/heads/dev.zip",
-    "graia-broadcast @ https://hub.fastgit.xyz/GraiaProject/BroadcastControl/archive/refs/heads/master.zip",
+    "graia-ariadne[full]>=0.7.15",
     "sqlmodel>=0.0.6",
     "aiosqlite>=0.17.0",
-    "creart-graia>=0.1.4",
 ]
 requires-python = ">=3.10"
 license = {text = "AGPL-3.0-only"}
-[project.optional-dependencies]
 
 [tool]
 [tool.pdm]
@@ -28,5 +25,5 @@ dev = [
 ]
 
 [build-system]
-requires = ["pdm-pep517>=0.12.0"]
+requires = ["pdm-pep517>=1.0.0"]
 build-backend = "pdm.pep517.api"
