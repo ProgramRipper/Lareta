@@ -12,11 +12,14 @@ from graia.ariadne.connection.config import config as ariadne_config
 from graia.ariadne.message.commander import Commander
 from graia.ariadne.message.commander.saya import CommanderBehaviour
 from graia.broadcast.entities.decorator import Decorator
+from graia.broadcast.entities.dispatcher import BaseDispatcher
 from graia.broadcast.exceptions import PropagationCancelled
 from graia.broadcast.interfaces.decorator import DecoratorInterface
+from graia.broadcast.interfaces.dispatcher import DispatcherInterface
 from graia.broadcast.interrupt import InterruptControl
 from graia.saya import Saya
 from graia.saya.builtins.broadcast import BroadcastBehaviour
+from launart import Launart, Launchable
 from loguru import logger
 from typing_extensions import NotRequired, Required
 
@@ -32,6 +35,18 @@ app = Ariadne(
 )
 bcc = app.broadcast
 saya = Saya(bcc)
+
+
+@bcc.prelude_dispatchers.append
+class LaunchableDispatcher(BaseDispatcher):
+    @staticmethod
+    async def catch(interface: DispatcherInterface):
+        if issubclass(interface.annotation, Launchable) and isinstance(
+            launchable := Launart.current().launchables[interface.annotation.id],
+            interface.annotation,
+        ):
+            return launchable
+
 
 saya.mount("graia.broadcast.interrupt.InterruptControl", InterruptControl(bcc))
 saya.install_behaviours(BroadcastBehaviour(bcc))
