@@ -1,8 +1,7 @@
 import json
 from typing import Any, TypedDict
 
-from graia.ariadne.entry import Ariadne
-from graia.ariadne.entry import config as ariadne_config
+import creart  # before Ariadne 0.7.17
 from graia.ariadne.message.commander import Commander
 from graia.ariadne.message.commander.saya import CommanderBehaviour
 from graia.broadcast.entities.decorator import Decorator
