@@ -2,6 +2,13 @@ import json
 from typing import Any, TypedDict
 
 import creart  # before Ariadne 0.7.17
+from graia.ariadne.app import Ariadne
+from graia.ariadne.connection.config import (
+    HttpClientConfig,
+    WebsocketServerConfig,
+    WebsocketClientConfig,
+)
+from graia.ariadne.connection.config import config as ariadne_config
 from graia.ariadne.message.commander import Commander
 from graia.ariadne.message.commander.saya import CommanderBehaviour
 from graia.broadcast.entities.decorator import Decorator
@@ -18,6 +25,9 @@ app = Ariadne(
     ariadne_config(
         secret["account"],
         secret["verify_key"],
+        HttpClientConfig("http://localhost:8080"),
+        # WebsocketClientConfig("ws://localhost:8080"),
+        WebsocketServerConfig("/mirai", {"verify_key": secret["verify_key"]}),
     )
 )
 bcc = app.broadcast
