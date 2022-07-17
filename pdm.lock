@@ -177,6 +177,7 @@ dependencies = [
 name = "graia-broadcast"
 version = "0.18.2"
 requires_python = ">=3.7,<4.0"
+url = "https://hub.fastgit.xyz/GraiaProject/BroadcastControl/archive/refs/heads/master.zip"
 summary = "a highly customizable, elegantly designed event system based on asyncio"
 
 [[package]]
@@ -375,7 +376,7 @@ dependencies = [
 
 [metadata]
 lock_version = "4.0"
-content_hash = "sha256:14b2c2125d84f7e2eacc0b45db50dd398a8d6d72e2a4058fc81e6c31bddacd93"
+content_hash = "sha256:dc1829c9e3f7a16fffb957cc6bb1e7b8d6facd72d9ccd0ef33aea965c2c85be2"
 
 [metadata.files]
 "aiohttp 3.8.1" = [
@@ -597,8 +598,7 @@ content_hash = "sha256:14b2c2125d84f7e2eacc0b45db50dd398a8d6d72e2a4058fc81e6c31b
     {url = "https://files.pythonhosted.org/packages/cf/cb/4a76408377937783afdbe522d5535e8badbe93ef29ff0da5a1e101fb8438/graia_ariadne-0.7.16-py3-none-any.whl", hash = "sha256:cf8e27cd97fb380f959be5245d9d01a047b46365d6f6e4e8aa8c04ea7880e410"},
 ]
 "graia-broadcast 0.18.2" = [
-    {url = "https://files.pythonhosted.org/packages/84/5f/93cd697ef2cbdae2b9ed8ec0011713b40c872a495b0abcbdab186d02ade9/graia-broadcast-0.18.2.tar.gz", hash = "sha256:07b0285d417021c795c3c4f4f12713311fcdec10d63f8e7a8ed7964e2f1b7a5a"},
-    {url = "https://files.pythonhosted.org/packages/0b/14/e155d41933b6069a0ea85dd04aca5660cdf156aee4bd8b44117b9be751a1/graia_broadcast-0.18.2-py3-none-any.whl", hash = "sha256:dcb712dc5be29419c4b65dc649c4e7c795c834fb810682f6131b313d6bd3e740"},
+    {url = "https://hub.fastgit.xyz/GraiaProject/BroadcastControl/archive/refs/heads/master.zip", hash = "sha256:559d5aa5a1f4623d8dc25b17134771fb7ebde712a247026e90ff1b8aa8dc0017"},
 ]
 "graia-saya 0.0.16" = [
     {url = "https://files.pythonhosted.org/packages/0d/e9/795f3a6dedc0498b5b92cdd207198a1fde6e7a26b8c1f579db881c70b5d7/graia-saya-0.0.16.tar.gz", hash = "sha256:4150d288a6a852b3d275715ded5e1de9031b4aa63ed98b5ba4232e1a0908ea11"},
